@@ -1,0 +1,161 @@
+//@version=6
+indicator("QF HT1 / HT2 Previous Range Boxes - Historical", overlay = true, max_boxes_count = 500)
+
+//---------------------------------------------------------
+// Inputs
+//---------------------------------------------------------
+groupHT1 = "HT1 - Higher Higher Timeframe"
+ht1        = input.timeframe("D", "HT1 Timeframe", group = groupHT1)
+showHT1    = input.bool(true, "Show HT1 Boxes", group = groupHT1)
+ht1Border  = input.color(color.new(color.blue, 0), "HT1 Border Color", group = groupHT1)
+ht1Fill    = input.color(color.new(color.blue, 85), "HT1 Fill Color", group = groupHT1)
+ht1Width   = input.int(1, "HT1 Border Width", minval = 1, maxval = 5, group = groupHT1)
+ht1History = input.int(100, "HT1 Max Boxes", minval = 1, maxval = 250, group = groupHT1)
+
+groupHT2 = "HT2 - Higher Timeframe"
+ht2        = input.timeframe("240", "HT2 Timeframe", group = groupHT2)
+showHT2    = input.bool(true, "Show HT2 Boxes", group = groupHT2)
+ht2Border  = input.color(color.new(color.orange, 0), "HT2 Border Color", group = groupHT2)
+ht2Fill    = input.color(color.new(color.orange, 85), "HT2 Fill Color", group = groupHT2)
+ht2Width   = input.int(1, "HT2 Border Width", minval = 1, maxval = 5, group = groupHT2)
+ht2History = input.int(100, "HT2 Max Boxes", minval = 1, maxval = 250, group = groupHT2)
+
+groupDaily = "Custom Daily Logic"
+useCustomDaily = input.bool(true, "Use Custom Daily Logic Only When HTF = D", group = groupDaily, tooltip = "If enabled, any selected HTF equal to D will use the manual daily start hour instead of the exchange-defined daily candle.")
+dailyStartHour = input.int(17, "Daily Start Hour", minval = 0, maxval = 23, group = groupDaily, tooltip = "Hour at which a new custom day begins, using the chart/exchange time basis.")
+
+groupGen = "General"
+showLabels = input.bool(true, "Show Box Labels", group = groupGen)
+labelSize  = input.string("Tiny", "Label Size", options = ["Tiny", "Small", "Normal"], group = groupGen)
+
+//---------------------------------------------------------
+// Helpers
+//---------------------------------------------------------
+f_text_size(_size) =>
+    _size == "Small" ? size.small : _size == "Normal" ? size.normal : size.tiny
+
+f_validate_htf(_tf) =>
+    timeframe.in_seconds(_tf) > timeframe.in_seconds(timeframe.period)
+
+f_is_daily_tf(_tf) =>
+    timeframe.in_seconds(_tf) == timeframe.in_seconds("D")
+
+f_trim_boxes(_arr, _maxCount) =>
+    while array.size(_arr) > _maxCount
+        oldBox = array.shift(_arr)
+        box.delete(oldBox)
+
+//---------------------------------------------------------
+// Validation
+//---------------------------------------------------------
+if showHT1 and not f_validate_htf(ht1)
+    runtime.error("HT1 must be higher than the current chart timeframe.")
+
+if showHT2 and not f_validate_htf(ht2)
+    runtime.error("HT2 must be higher than the current chart timeframe.")
+
+//---------------------------------------------------------
+// Generic non-daily current slot detection
+//---------------------------------------------------------
+ht1NewSlot = timeframe.change(ht1)
+ht2NewSlot = timeframe.change(ht2)
+
+ht1CurrStart = time(ht1)
+ht1CurrEnd   = time_close(ht1)
+
+ht2CurrStart = time(ht2)
+ht2CurrEnd   = time_close(ht2)
+
+//---------------------------------------------------------
+// Custom daily logic based on manual hour
+//---------------------------------------------------------
+barHour = hour(time)
+barYear = year(time)
+barMonth = month(time)
+barDay = dayofmonth(time)
+
+customAnchorTs = timestamp(syminfo.timezone, barYear, barMonth, barDay, dailyStartHour, 0)
+isBeforeStart = time < customAnchorTs
+
+effectiveStartTs = isBeforeStart ? timestamp(syminfo.timezone, year(time - 24 * 60 * 60 * 1000), month(time - 24 * 60 * 60 * 1000), dayofmonth(time - 24 * 60 * 60 * 1000), dailyStartHour, 0) : customAnchorTs
+effectiveEndTs   = effectiveStartTs + 24 * 60 * 60 * 1000
+
+newCustomDay = time >= effectiveStartTs and time[1] < effectiveStartTs
+
+//---------------------------------------------------------
+// State for HT1
+//---------------------------------------------------------
+var float ht1RunHigh = na
+var float ht1RunLow = na
+var array<box> ht1Boxes = array.new<box>()
+
+ht1UseCustomDaily = useCustomDaily and f_is_daily_tf(ht1)
+ht1Boundary = ht1UseCustomDaily ? newCustomDay : ht1NewSlot
+ht1SlotStart = ht1UseCustomDaily ? effectiveStartTs : ht1CurrStart
+ht1SlotEnd   = ht1UseCustomDaily ? effectiveEndTs : ht1CurrEnd
+ht1Text      = ht1UseCustomDaily ? "HT1 Prev Custom D" : "HT1 Prev " + ht1
+
+if ht1Boundary
+    if not na(ht1RunHigh) and not na(ht1RunLow) and showHT1 and not na(ht1SlotStart) and not na(ht1SlotEnd)
+        ht1Box = box.new(
+             left = ht1SlotStart,
+             top = ht1RunHigh,
+             right = ht1SlotEnd,
+             bottom = ht1RunLow,
+             xloc = xloc.bar_time,
+             border_color = ht1Border,
+             border_width = ht1Width,
+             bgcolor = ht1Fill,
+             text = showLabels ? ht1Text : "",
+             text_size = f_text_size(labelSize),
+             text_color = ht1Border,
+             text_halign = text.align_left,
+             text_valign = text.align_top
+         )
+        array.push(ht1Boxes, ht1Box)
+        f_trim_boxes(ht1Boxes, ht1History)
+
+    ht1RunHigh := high
+    ht1RunLow := low
+else
+    ht1RunHigh := na(ht1RunHigh) ? high : math.max(ht1RunHigh, high)
+    ht1RunLow := na(ht1RunLow) ? low : math.min(ht1RunLow, low)
+
+//---------------------------------------------------------
+// State for HT2
+//---------------------------------------------------------
+var float ht2RunHigh = na
+var float ht2RunLow = na
+var array<box> ht2Boxes = array.new<box>()
+
+ht2UseCustomDaily = useCustomDaily and f_is_daily_tf(ht2)
+ht2Boundary = ht2UseCustomDaily ? newCustomDay : ht2NewSlot
+ht2SlotStart = ht2UseCustomDaily ? effectiveStartTs : ht2CurrStart
+ht2SlotEnd   = ht2UseCustomDaily ? effectiveEndTs : ht2CurrEnd
+ht2Text      = ht2UseCustomDaily ? "HT2 Prev Custom D" : "HT2 Prev " + ht2
+
+if ht2Boundary
+    if not na(ht2RunHigh) and not na(ht2RunLow) and showHT2 and not na(ht2SlotStart) and not na(ht2SlotEnd)
+        ht2Box = box.new(
+             left = ht2SlotStart,
+             top = ht2RunHigh,
+             right = ht2SlotEnd,
+             bottom = ht2RunLow,
+             xloc = xloc.bar_time,
+             border_color = ht2Border,
+             border_width = ht2Width,
+             bgcolor = ht2Fill,
+             text = showLabels ? ht2Text : "",
+             text_size = f_text_size(labelSize),
+             text_color = ht2Border,
+             text_halign = text.align_left,
+             text_valign = text.align_top
+         )
+        array.push(ht2Boxes, ht2Box)
+        f_trim_boxes(ht2Boxes, ht2History)
+
+    ht2RunHigh := high
+    ht2RunLow := low
+else
+    ht2RunHigh := na(ht2RunHigh) ? high : math.max(ht2RunHigh, high)
+    ht2RunLow := na(ht2RunLow) ? low : math.min(ht2RunLow, low)
