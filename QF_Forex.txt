@@ -1,5 +1,5 @@
 //@version=6
-indicator("QF HT1 / HT2 Previous Range Boxes - Historical", overlay = true, max_boxes_count = 500)
+indicator("HT1 / HT2 Previous Range Boxes - Historical", overlay = true, max_boxes_count = 500, max_labels_count = 500)
 
 //---------------------------------------------------------
 // Inputs
@@ -22,11 +22,18 @@ ht2History = input.int(100, "HT2 Max Boxes", minval = 1, maxval = 250, group = g
 
 groupDaily = "Custom Daily Logic"
 useCustomDaily = input.bool(true, "Use Custom Daily Logic Only When HTF = D", group = groupDaily, tooltip = "If enabled, any selected HTF equal to D will use the manual daily start hour instead of the exchange-defined daily candle.")
-dailyStartHour = input.int(17, "Daily Start Hour", minval = 0, maxval = 23, group = groupDaily, tooltip = "Hour at which a new custom day begins, using the chart/exchange time basis.")
+dailyStartHour = input.int(17, "Daily Start Hour", minval = 0, maxval = 23, group = groupDaily, tooltip = "Hour at which a new custom day begins. Default 17 matches the common Forex New York close.")
+
+groupBias = "Bias Labels"
+showBiasLabels = input.bool(true, "Show Bias Labels", group = groupBias)
+bullBiasColor  = input.color(color.new(color.green, 0), "Bull Label Color", group = groupBias)
+bearBiasColor  = input.color(color.new(color.red, 0), "Bear Label Color", group = groupBias)
+neutralBiasColor = input.color(color.new(color.gray, 0), "Neutral Label Color", group = groupBias)
+biasLabelSize  = input.string("Tiny", "Bias Label Size", options = ["Tiny", "Small", "Normal"], group = groupBias)
 
 groupGen = "General"
 showLabels = input.bool(true, "Show Box Labels", group = groupGen)
-labelSize  = input.string("Tiny", "Label Size", options = ["Tiny", "Small", "Normal"], group = groupGen)
+labelSize  = input.string("Tiny", "Box Label Size", options = ["Tiny", "Small", "Normal"], group = groupGen)
 
 //---------------------------------------------------------
 // Helpers
@@ -45,6 +52,17 @@ f_trim_boxes(_arr, _maxCount) =>
         oldBox = array.shift(_arr)
         box.delete(oldBox)
 
+f_trim_labels(_arr, _maxCount) =>
+    while array.size(_arr) > _maxCount
+        oldLbl = array.shift(_arr)
+        label.delete(oldLbl)
+
+f_bias_text(_open, _close) =>
+    _close > _open ? "BULL" : _close < _open ? "BEAR" : "NEUTRAL"
+
+f_bias_color(_open, _close, _bull, _bear, _neutral) =>
+    _close > _open ? _bull : _close < _open ? _bear : _neutral
+
 //---------------------------------------------------------
 // Validation
 //---------------------------------------------------------
@@ -55,10 +73,10 @@ if showHT2 and not f_validate_htf(ht2)
     runtime.error("HT2 must be higher than the current chart timeframe.")
 
 //---------------------------------------------------------
-// Generic non-daily current slot detection
+// HTF slot detection
 //---------------------------------------------------------
-ht1NewSlot = timeframe.change(ht1)
-ht2NewSlot = timeframe.change(ht2)
+ht1Boundary = timeframe.change(ht1)
+ht2Boundary = timeframe.change(ht2)
 
 ht1CurrStart = time(ht1)
 ht1CurrEnd   = time_close(ht1)
@@ -67,95 +85,153 @@ ht2CurrStart = time(ht2)
 ht2CurrEnd   = time_close(ht2)
 
 //---------------------------------------------------------
-// Custom daily logic based on manual hour
+// Custom daily slot detection
 //---------------------------------------------------------
-barHour = hour(time)
-barYear = year(time)
-barMonth = month(time)
-barDay = dayofmonth(time)
+msInDay = 24 * 60 * 60 * 1000
+prevBarTime = nz(time[1], time)
 
-customAnchorTs = timestamp(syminfo.timezone, barYear, barMonth, barDay, dailyStartHour, 0)
-isBeforeStart = time < customAnchorTs
+todayAnchor = timestamp(syminfo.timezone, year(time), month(time), dayofmonth(time), dailyStartHour, 0)
+prevTodayAnchor = timestamp(syminfo.timezone, year(prevBarTime), month(prevBarTime), dayofmonth(prevBarTime), dailyStartHour, 0)
 
-effectiveStartTs = isBeforeStart ? timestamp(syminfo.timezone, year(time - 24 * 60 * 60 * 1000), month(time - 24 * 60 * 60 * 1000), dayofmonth(time - 24 * 60 * 60 * 1000), dailyStartHour, 0) : customAnchorTs
-effectiveEndTs   = effectiveStartTs + 24 * 60 * 60 * 1000
-
-newCustomDay = time >= effectiveStartTs and time[1] < effectiveStartTs
+currentCustomStart = time >= todayAnchor ? todayAnchor : todayAnchor - msInDay
+prevCustomStart    = prevBarTime >= prevTodayAnchor ? prevTodayAnchor : prevTodayAnchor - msInDay
+currentCustomEnd   = currentCustomStart + msInDay
+newCustomDay       = currentCustomStart != prevCustomStart
 
 //---------------------------------------------------------
-// State for HT1
+// HT1 state
 //---------------------------------------------------------
 var float ht1RunHigh = na
 var float ht1RunLow = na
+var float ht1RunOpen = na
+var float ht1RunClose = na
 var array<box> ht1Boxes = array.new<box>()
+var array<label> ht1BiasLabels = array.new<label>()
 
 ht1UseCustomDaily = useCustomDaily and f_is_daily_tf(ht1)
-ht1Boundary = ht1UseCustomDaily ? newCustomDay : ht1NewSlot
-ht1SlotStart = ht1UseCustomDaily ? effectiveStartTs : ht1CurrStart
-ht1SlotEnd   = ht1UseCustomDaily ? effectiveEndTs : ht1CurrEnd
-ht1Text      = ht1UseCustomDaily ? "HT1 Prev Custom D" : "HT1 Prev " + ht1
+ht1NewSlot        = ht1UseCustomDaily ? newCustomDay : ht1Boundary
+ht1SlotStart      = ht1UseCustomDaily ? currentCustomStart : ht1CurrStart
+ht1SlotEnd        = ht1UseCustomDaily ? currentCustomEnd : ht1CurrEnd
+ht1Text           = ht1UseCustomDaily ? "HT1 Prev Custom D" : "HT1 Prev " + ht1
 
-if ht1Boundary
-    if not na(ht1RunHigh) and not na(ht1RunLow) and showHT1 and not na(ht1SlotStart) and not na(ht1SlotEnd)
+if barstate.isfirst
+    ht1RunHigh := high
+    ht1RunLow := low
+    ht1RunOpen := open
+    ht1RunClose := close
+
+if ht1NewSlot
+    if showHT1 and not na(ht1RunHigh) and not na(ht1RunLow) and not na(ht1SlotStart) and not na(ht1SlotEnd)
         ht1Box = box.new(
              left = ht1SlotStart,
-             top = ht1RunHigh,
              right = ht1SlotEnd,
+             top = ht1RunHigh,
              bottom = ht1RunLow,
              xloc = xloc.bar_time,
              border_color = ht1Border,
              border_width = ht1Width,
              bgcolor = ht1Fill,
              text = showLabels ? ht1Text : "",
-             text_size = f_text_size(labelSize),
              text_color = ht1Border,
+             text_size = f_text_size(labelSize),
              text_halign = text.align_left,
              text_valign = text.align_top
          )
         array.push(ht1Boxes, ht1Box)
         f_trim_boxes(ht1Boxes, ht1History)
 
+        if showBiasLabels
+            ht1BiasText = f_bias_text(ht1RunOpen, ht1RunClose)
+            ht1BiasCol = f_bias_color(ht1RunOpen, ht1RunClose, bullBiasColor, bearBiasColor, neutralBiasColor)
+            ht1BiasLabel = label.new(
+                 x = ht1SlotStart,
+                 y = ht1RunHigh,
+                 text = ht1BiasText,
+                 xloc = xloc.bar_time,
+                 yloc = yloc.price,
+                 style = label.style_label_lower_left,
+                 color = ht1BiasCol,
+                 textcolor = color.white,
+                 size = f_text_size(biasLabelSize)
+             )
+            array.push(ht1BiasLabels, ht1BiasLabel)
+            f_trim_labels(ht1BiasLabels, ht1History)
+
     ht1RunHigh := high
     ht1RunLow := low
+    ht1RunOpen := open
+    ht1RunClose := close
 else
     ht1RunHigh := na(ht1RunHigh) ? high : math.max(ht1RunHigh, high)
     ht1RunLow := na(ht1RunLow) ? low : math.min(ht1RunLow, low)
+    ht1RunOpen := na(ht1RunOpen) ? open : ht1RunOpen
+    ht1RunClose := close
 
 //---------------------------------------------------------
-// State for HT2
+// HT2 state
 //---------------------------------------------------------
 var float ht2RunHigh = na
 var float ht2RunLow = na
+var float ht2RunOpen = na
+var float ht2RunClose = na
 var array<box> ht2Boxes = array.new<box>()
+var array<label> ht2BiasLabels = array.new<label>()
 
 ht2UseCustomDaily = useCustomDaily and f_is_daily_tf(ht2)
-ht2Boundary = ht2UseCustomDaily ? newCustomDay : ht2NewSlot
-ht2SlotStart = ht2UseCustomDaily ? effectiveStartTs : ht2CurrStart
-ht2SlotEnd   = ht2UseCustomDaily ? effectiveEndTs : ht2CurrEnd
-ht2Text      = ht2UseCustomDaily ? "HT2 Prev Custom D" : "HT2 Prev " + ht2
+ht2NewSlot        = ht2UseCustomDaily ? newCustomDay : ht2Boundary
+ht2SlotStart      = ht2UseCustomDaily ? currentCustomStart : ht2CurrStart
+ht2SlotEnd        = ht2UseCustomDaily ? currentCustomEnd : ht2CurrEnd
+ht2Text           = ht2UseCustomDaily ? "HT2 Prev Custom D" : "HT2 Prev " + ht2
 
-if ht2Boundary
-    if not na(ht2RunHigh) and not na(ht2RunLow) and showHT2 and not na(ht2SlotStart) and not na(ht2SlotEnd)
+if barstate.isfirst
+    ht2RunHigh := high
+    ht2RunLow := low
+    ht2RunOpen := open
+    ht2RunClose := close
+
+if ht2NewSlot
+    if showHT2 and not na(ht2RunHigh) and not na(ht2RunLow) and not na(ht2SlotStart) and not na(ht2SlotEnd)
         ht2Box = box.new(
              left = ht2SlotStart,
-             top = ht2RunHigh,
              right = ht2SlotEnd,
+             top = ht2RunHigh,
              bottom = ht2RunLow,
              xloc = xloc.bar_time,
              border_color = ht2Border,
              border_width = ht2Width,
              bgcolor = ht2Fill,
              text = showLabels ? ht2Text : "",
-             text_size = f_text_size(labelSize),
              text_color = ht2Border,
+             text_size = f_text_size(labelSize),
              text_halign = text.align_left,
              text_valign = text.align_top
          )
         array.push(ht2Boxes, ht2Box)
         f_trim_boxes(ht2Boxes, ht2History)
 
+        if showBiasLabels
+            ht2BiasText = f_bias_text(ht2RunOpen, ht2RunClose)
+            ht2BiasCol = f_bias_color(ht2RunOpen, ht2RunClose, bullBiasColor, bearBiasColor, neutralBiasColor)
+            ht2BiasLabel = label.new(
+                 x = ht2SlotStart,
+                 y = ht2RunHigh,
+                 text = ht2BiasText,
+                 xloc = xloc.bar_time,
+                 yloc = yloc.price,
+                 style = label.style_label_lower_left,
+                 color = ht2BiasCol,
+                 textcolor = color.white,
+                 size = f_text_size(biasLabelSize)
+             )
+            array.push(ht2BiasLabels, ht2BiasLabel)
+            f_trim_labels(ht2BiasLabels, ht2History)
+
     ht2RunHigh := high
     ht2RunLow := low
+    ht2RunOpen := open
+    ht2RunClose := close
 else
     ht2RunHigh := na(ht2RunHigh) ? high : math.max(ht2RunHigh, high)
     ht2RunLow := na(ht2RunLow) ? low : math.min(ht2RunLow, low)
+    ht2RunOpen := na(ht2RunOpen) ? open : ht2RunOpen
+    ht2RunClose := close
