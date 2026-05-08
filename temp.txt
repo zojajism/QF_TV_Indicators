@@ -29,25 +29,14 @@ showBiasLabels   = input.bool(true, "Show Bias Labels", group = groupBias)
 bullBiasColor    = input.color(color.new(color.green, 0), "Bull Label Color", group = groupBias)
 bearBiasColor    = input.color(color.new(color.red, 0), "Bear Label Color", group = groupBias)
 neutralBiasColor = input.color(color.new(color.gray, 0), "Neutral Label Color", group = groupBias)
-biasLabelSize    = input.string("Tiny", "Bias Label Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = groupBias)
+biasLabelSize    = input.string("Large", "Bias Label Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = groupBias)
 
 groupPointer = "EMA20 Pointer"
-showEmaPointer    = input.bool(true, "Show EMA20 Pointer", group = groupPointer)
-emaLength         = input.int(20, "EMA Length", minval = 1, group = groupPointer)
-emaBullPointer    = input.string("▲", "Bull Pointer Symbol", group = groupPointer)
-emaBearPointer    = input.string("▼", "Bear Pointer Symbol", group = groupPointer)
-emaNeutralPointer = input.string("•", "Neutral Pointer Symbol", group = groupPointer)
-emaBullColor      = input.color(color.new(color.lime, 0), "Bull Pointer Color", group = groupPointer)
-emaBearColor      = input.color(color.new(color.red, 0), "Bear Pointer Color", group = groupPointer)
-emaNeutralColor   = input.color(color.new(color.gray, 0), "Neutral Pointer Color", group = groupPointer)
-emaPointerSize    = input.string("Large", "Pointer Size", options = ["Tiny", "Small", "Normal", "Large", "Huge"], group = groupPointer)
-pointerBarsLeft   = input.int(1, "Pointer Shift Left (bars)", minval = 0, maxval = 10, group = groupPointer)
-
-groupAdx = "ADX"
-showAdxInBoxLabel = input.bool(true, "Show ADX In Box Label", group = groupAdx)
-adxDiLength       = input.int(14, "ADX DI Length", minval = 1, group = groupAdx)
-adxSmooth         = input.int(14, "ADX Smoothing", minval = 1, group = groupAdx)
-adxDecimals       = input.int(1, "ADX Decimals", minval = 0, maxval = 4, group = groupAdx)
+showEmaPointer   = input.bool(true, "Show EMA20 Pointer", group = groupPointer)
+emaLength        = input.int(20, "EMA Length", minval = 1, group = groupPointer)
+emaBullPointer   = input.string("▲", "Bull Pointer", group = groupPointer)
+emaBearPointer   = input.string("▼", "Bear Pointer", group = groupPointer)
+emaNeutralPointer = input.string("•", "Neutral Pointer", group = groupPointer)
 
 groupGen = "General"
 showLabels = input.bool(true, "Show Box Labels", group = groupGen)
@@ -58,10 +47,10 @@ labelSize  = input.string("Tiny", "Box Label Size", options = ["Tiny", "Small", 
 //---------------------------------------------------------
 f_text_size(_size) =>
     (
-        _size == "Tiny"   ? size.tiny :
+        _size == "Tiny"   ? size.tiny  :
         _size == "Small"  ? size.small :
         _size == "Normal" ? size.normal :
-        _size == "Huge"   ? size.huge : size.large
+        _size == "Huge"   ? size.huge   : size.large
     )
 
 f_validate_htf(_tf) =>
@@ -89,17 +78,8 @@ f_bias_color(_open, _close, _bull, _bear, _neutral) =>
 f_pointer_text(_close, _ema, _bullPtr, _bearPtr, _neutralPtr) =>
     _close > _ema ? _bullPtr : _close < _ema ? _bearPtr : _neutralPtr
 
-f_pointer_color(_close, _ema, _bullCol, _bearCol, _neutralCol) =>
-    _close > _ema ? _bullCol : _close < _ema ? _bearCol : _neutralCol
-
-f_adx_format(_value, _decimals) =>
-    (
-        _decimals == 0 ? str.tostring(_value, "#") :
-        _decimals == 1 ? str.tostring(_value, "#.0") :
-        _decimals == 2 ? str.tostring(_value, "#.00") :
-        _decimals == 3 ? str.tostring(_value, "#.000") :
-        str.tostring(_value, "#.0000")
-    )
+f_bias_with_pointer(_open, _close, _ema, _bullPtr, _bearPtr, _neutralPtr) =>
+    f_pointer_text(_close, _ema, _bullPtr, _bearPtr, _neutralPtr) + " " + f_bias_text(_open, _close)
 
 //---------------------------------------------------------
 // Validation
@@ -109,11 +89,6 @@ if showHT1 and not f_validate_htf(ht1)
 
 if showHT2 and not f_validate_htf(ht2)
     runtime.error("HT2 must be higher than the current chart timeframe.")
-
-//---------------------------------------------------------
-// Time helpers
-//---------------------------------------------------------
-chartBarMs = na(time[1]) ? timeframe.in_seconds(timeframe.period) * 1000 : (time - time[1])
 
 //---------------------------------------------------------
 // HTF slot detection
@@ -128,16 +103,15 @@ ht2CurrStart = time(ht2)
 ht2CurrEnd   = time_close(ht2)
 
 //---------------------------------------------------------
-// EMA and ADX data from actual HTFs
+// HTF previous candle data using request.security()
 //---------------------------------------------------------
-ht1PrevEma = request.security(syminfo.tickerid, ht1, ta.ema(close, emaLength)[1], lookahead = barmerge.lookahead_off)
-ht2PrevEma = request.security(syminfo.tickerid, ht2, ta.ema(close, emaLength)[1], lookahead = barmerge.lookahead_off)
+ht1PrevOpen  = request.security(syminfo.tickerid, ht1, open[1],  lookahead = barmerge.lookahead_off)
+ht1PrevClose = request.security(syminfo.tickerid, ht1, close[1], lookahead = barmerge.lookahead_off)
+ht1PrevEma   = request.security(syminfo.tickerid, ht1, ta.ema(close, emaLength)[1], lookahead = barmerge.lookahead_off)
 
-[diplus1, diminus1, adx1] = ta.dmi(adxDiLength, adxSmooth)
-[diplus2, diminus2, adx2] = ta.dmi(adxDiLength, adxSmooth)
-
-[ht1PrevDiPlus, ht1PrevDiMinus, ht1PrevAdx] = request.security(syminfo.tickerid, ht1, [diplus1[1], diminus1[1], adx1[1]], lookahead = barmerge.lookahead_off)
-[ht2PrevDiPlus, ht2PrevDiMinus, ht2PrevAdx] = request.security(syminfo.tickerid, ht2, [diplus2[1], diminus2[1], adx2[1]], lookahead = barmerge.lookahead_off)
+ht2PrevOpen  = request.security(syminfo.tickerid, ht2, open[1],  lookahead = barmerge.lookahead_off)
+ht2PrevClose = request.security(syminfo.tickerid, ht2, close[1], lookahead = barmerge.lookahead_off)
+ht2PrevEma   = request.security(syminfo.tickerid, ht2, ta.ema(close, emaLength)[1], lookahead = barmerge.lookahead_off)
 
 //---------------------------------------------------------
 // Custom daily slot detection
@@ -158,27 +132,21 @@ newCustomDay       = currentCustomStart != prevCustomStart
 //---------------------------------------------------------
 var float ht1RunHigh = na
 var float ht1RunLow = na
-var float ht1RunOpen = na
-var float ht1RunClose = na
-var box[] ht1Boxes = array.new_box()
-var label[] ht1BiasLabels = array.new_label()
-var label[] ht1PointerLabels = array.new_label()
+var array<box> ht1Boxes = array.new<box>()
+var array<label> ht1BiasLabels = array.new<label>()
 
 ht1UseCustomDaily = useCustomDaily and f_is_daily_tf(ht1)
 ht1NewSlot        = ht1UseCustomDaily ? newCustomDay : ht1Boundary
 ht1SlotStart      = ht1UseCustomDaily ? currentCustomStart : ht1CurrStart
 ht1SlotEnd        = ht1UseCustomDaily ? currentCustomEnd : ht1CurrEnd
-ht1BaseText       = ht1UseCustomDaily ? "HT1 Prev Custom D" : "HT1 Prev " + ht1
-ht1Text           = showAdxInBoxLabel and not na(ht1PrevAdx) ? ht1BaseText + " | ADX: " + f_adx_format(ht1PrevAdx, adxDecimals) : ht1BaseText
+ht1Text           = ht1UseCustomDaily ? "HT1 Prev Custom D" : "HT1 Prev " + ht1
 
 if barstate.isfirst
     ht1RunHigh := high
     ht1RunLow := low
-    ht1RunOpen := open
-    ht1RunClose := close
 
 if ht1NewSlot
-    if showHT1 and not na(ht1RunHigh) and not na(ht1RunLow) and not na(ht1RunOpen) and not na(ht1RunClose) and not na(ht1SlotStart) and not na(ht1SlotEnd)
+    if showHT1 and not na(ht1RunHigh) and not na(ht1RunLow) and not na(ht1SlotStart) and not na(ht1SlotEnd)
         ht1Box = box.new(
              left = ht1SlotStart,
              right = ht1SlotEnd,
@@ -191,15 +159,18 @@ if ht1NewSlot
              text = showLabels ? ht1Text : "",
              text_color = ht1Border,
              text_size = f_text_size(labelSize),
-             text_halign = text.align_right,
-             text_valign = text.align_bottom
+             text_halign = text.align_left,
+             text_valign = text.align_top
          )
         array.push(ht1Boxes, ht1Box)
         f_trim_boxes(ht1Boxes, ht1History)
 
         if showBiasLabels
-            ht1BiasText = f_bias_text(ht1RunOpen, ht1RunClose)
-            ht1BiasCol  = f_bias_color(ht1RunOpen, ht1RunClose, bullBiasColor, bearBiasColor, neutralBiasColor)
+            ht1BiasText = showEmaPointer
+                 ? f_bias_with_pointer(ht1PrevOpen, ht1PrevClose, ht1PrevEma, emaBullPointer, emaBearPointer, emaNeutralPointer)
+                 : f_bias_text(ht1PrevOpen, ht1PrevClose)
+
+            ht1BiasCol = f_bias_color(ht1PrevOpen, ht1PrevClose, bullBiasColor, bearBiasColor, neutralBiasColor)
 
             ht1BiasLabel = label.new(
                  x = ht1SlotStart,
@@ -215,60 +186,32 @@ if ht1NewSlot
             array.push(ht1BiasLabels, ht1BiasLabel)
             f_trim_labels(ht1BiasLabels, ht1History)
 
-            if showEmaPointer
-                ht1PointerText = f_pointer_text(ht1RunClose, ht1PrevEma, emaBullPointer, emaBearPointer, emaNeutralPointer)
-                ht1PointerCol  = f_pointer_color(ht1RunClose, ht1PrevEma, emaBullColor, emaBearColor, emaNeutralColor)
-
-                ht1PointerLabel = label.new(
-                     x = ht1SlotStart - pointerBarsLeft * chartBarMs,
-                     y = ht1RunHigh,
-                     text = ht1PointerText,
-                     xloc = xloc.bar_time,
-                     yloc = yloc.price,
-                     style = label.style_none,
-                     color = color.new(color.black, 100),
-                     textcolor = ht1PointerCol,
-                     size = f_text_size(emaPointerSize)
-                 )
-                array.push(ht1PointerLabels, ht1PointerLabel)
-                f_trim_labels(ht1PointerLabels, ht1History)
-
     ht1RunHigh := high
     ht1RunLow := low
-    ht1RunOpen := open
-    ht1RunClose := close
 else
     ht1RunHigh := na(ht1RunHigh) ? high : math.max(ht1RunHigh, high)
     ht1RunLow := na(ht1RunLow) ? low : math.min(ht1RunLow, low)
-    ht1RunOpen := na(ht1RunOpen) ? open : ht1RunOpen
-    ht1RunClose := close
 
 //---------------------------------------------------------
 // HT2 state
 //---------------------------------------------------------
 var float ht2RunHigh = na
 var float ht2RunLow = na
-var float ht2RunOpen = na
-var float ht2RunClose = na
-var box[] ht2Boxes = array.new_box()
-var label[] ht2BiasLabels = array.new_label()
-var label[] ht2PointerLabels = array.new_label()
+var array<box> ht2Boxes = array.new<box>()
+var array<label> ht2BiasLabels = array.new<label>()
 
 ht2UseCustomDaily = useCustomDaily and f_is_daily_tf(ht2)
 ht2NewSlot        = ht2UseCustomDaily ? newCustomDay : ht2Boundary
 ht2SlotStart      = ht2UseCustomDaily ? currentCustomStart : ht2CurrStart
 ht2SlotEnd        = ht2UseCustomDaily ? currentCustomEnd : ht2CurrEnd
-ht2BaseText       = ht2UseCustomDaily ? "HT2 Prev Custom D" : "HT2 Prev " + ht2
-ht2Text           = showAdxInBoxLabel and not na(ht2PrevAdx) ? ht2BaseText + " | ADX: " + f_adx_format(ht2PrevAdx, adxDecimals) : ht2BaseText
+ht2Text           = ht2UseCustomDaily ? "HT2 Prev Custom D" : "HT2 Prev " + ht2
 
 if barstate.isfirst
     ht2RunHigh := high
     ht2RunLow := low
-    ht2RunOpen := open
-    ht2RunClose := close
 
 if ht2NewSlot
-    if showHT2 and not na(ht2RunHigh) and not na(ht2RunLow) and not na(ht2RunOpen) and not na(ht2RunClose) and not na(ht2SlotStart) and not na(ht2SlotEnd)
+    if showHT2 and not na(ht2RunHigh) and not na(ht2RunLow) and not na(ht2SlotStart) and not na(ht2SlotEnd)
         ht2Box = box.new(
              left = ht2SlotStart,
              right = ht2SlotEnd,
@@ -281,15 +224,18 @@ if ht2NewSlot
              text = showLabels ? ht2Text : "",
              text_color = ht2Border,
              text_size = f_text_size(labelSize),
-             text_halign = text.align_right,
-             text_valign = text.align_bottom
+             text_halign = text.align_left,
+             text_valign = text.align_top
          )
         array.push(ht2Boxes, ht2Box)
         f_trim_boxes(ht2Boxes, ht2History)
 
         if showBiasLabels
-            ht2BiasText = f_bias_text(ht2RunOpen, ht2RunClose)
-            ht2BiasCol  = f_bias_color(ht2RunOpen, ht2RunClose, bullBiasColor, bearBiasColor, neutralBiasColor)
+            ht2BiasText = showEmaPointer
+                 ? f_bias_with_pointer(ht2PrevOpen, ht2PrevClose, ht2PrevEma, emaBullPointer, emaBearPointer, emaNeutralPointer)
+                 : f_bias_text(ht2PrevOpen, ht2PrevClose)
+
+            ht2BiasCol = f_bias_color(ht2PrevOpen, ht2PrevClose, bullBiasColor, bearBiasColor, neutralBiasColor)
 
             ht2BiasLabel = label.new(
                  x = ht2SlotStart,
@@ -305,30 +251,8 @@ if ht2NewSlot
             array.push(ht2BiasLabels, ht2BiasLabel)
             f_trim_labels(ht2BiasLabels, ht2History)
 
-            if showEmaPointer
-                ht2PointerText = f_pointer_text(ht2RunClose, ht2PrevEma, emaBullPointer, emaBearPointer, emaNeutralPointer)
-                ht2PointerCol  = f_pointer_color(ht2RunClose, ht2PrevEma, emaBullColor, emaBearColor, emaNeutralColor)
-
-                ht2PointerLabel = label.new(
-                     x = ht2SlotStart - pointerBarsLeft * chartBarMs,
-                     y = ht2RunHigh,
-                     text = ht2PointerText,
-                     xloc = xloc.bar_time,
-                     yloc = yloc.price,
-                     style = label.style_none,
-                     color = color.new(color.black, 100),
-                     textcolor = ht2PointerCol,
-                     size = f_text_size(emaPointerSize)
-                 )
-                array.push(ht2PointerLabels, ht2PointerLabel)
-                f_trim_labels(ht2PointerLabels, ht2History)
-
     ht2RunHigh := high
     ht2RunLow := low
-    ht2RunOpen := open
-    ht2RunClose := close
 else
     ht2RunHigh := na(ht2RunHigh) ? high : math.max(ht2RunHigh, high)
     ht2RunLow := na(ht2RunLow) ? low : math.min(ht2RunLow, low)
-    ht2RunOpen := na(ht2RunOpen) ? open : ht2RunOpen
-    ht2RunClose := close
